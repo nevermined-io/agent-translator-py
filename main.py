@@ -1,11 +1,11 @@
+# translator_agent.py
+
 from dotenv import load_dotenv
 import os
 import asyncio
 from payments_py import Environment, Payments
 from payments_py.data_models import AgentExecutionStatus, TaskLog
-from langchain_community.llms import OpenAI
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
+from translator import Translator
 
 load_dotenv()
 
@@ -17,24 +17,23 @@ agent_did = os.getenv('AGENT_DID')
 
 class TranslatorAgent:
     """
-    A translator agent that uses OpenAI's API and Nevermined's Payments API to translate text.
-
-    Attributes:
-        payment (Payments): An instance of the Payments class to interact with Nevermined's API.
+    An agent that uses the Translator class and Nevermined's Payments API to translate text.
     """
 
-    def __init__(self, payment):
+    def __init__(self, payment, translator):
         """
-        Initialize the TranslatorAgent with a Payments instance.
+        Initialize the TranslatorAgent with a Payments instance and a Translator instance.
 
         Args:
             payment (Payments): The Payments instance for interacting with Nevermined's API.
+            translator (Translator): The Translator instance for performing translations.
         """
         self.payment = payment
+        self.translator = translator
 
     async def run(self, data):
         """
-        Process incoming data to translate text using OpenAI's API and update task status via Nevermined's API.
+        Process incoming data to translate text and update task status via Nevermined's API.
 
         Args:
             data (dict): A dictionary containing task and step information.
@@ -42,7 +41,6 @@ class TranslatorAgent:
         Returns:
             None
         """
-        print("Data received:", data)
 
         # Retrieve the current step information using the step_id from data
         step = self.payment.ai_protocol.get_step(data['step_id'])
@@ -63,20 +61,8 @@ class TranslatorAgent:
         input_text = step['input_query']
 
         try:
-            # Initialize the OpenAI language model with the provided API key
-            llm = OpenAI(openai_api_key=openai_api_key)
-
-            # Define a prompt template for the translation task
-            prompt_template = PromptTemplate(
-                input_variables=["text"],
-                template="Translate the following text to Spanish:\n\n{text}"
-            )
-
-            # Create an LLMChain with the language model and the prompt template
-            translation_chain = LLMChain(llm=llm, prompt=prompt_template)
-
-            # Execute the translation chain with the input text
-            translated_text = translation_chain.run(text=input_text)
+            # Use the Translator instance to translate the text
+            translated_text = self.translator.translate_text(input_text)
 
             # Print the translated text to the console for verification
             print('Translation:', translated_text)
@@ -109,7 +95,7 @@ class TranslatorAgent:
             # Log the error and update the task status to 'Failed'
             await self.payment.ai_protocol.log_task(TaskLog(
                 task_id=step['task_id'],
-                message='Error during translation',
+                message=f'Error during translation: {e}',
                 level='error',
                 task_status=AgentExecutionStatus.Failed.value
             ))
@@ -132,8 +118,11 @@ async def main():
         ai_protocol=True,
     )
 
-    # Create an instance of the TranslatorAgent with the Payments object
-    agent = TranslatorAgent(payment)
+    # Create an instance of the Translator class
+    translator = Translator(openai_api_key=openai_api_key)
+
+    # Create an instance of the TranslatorAgent with the Payments object and Translator
+    agent = TranslatorAgent(payment, translator)
 
     # Subscribe to the AI protocol to receive tasks assigned to this agent
     subscription_task = asyncio.get_event_loop().create_task(
@@ -144,9 +133,6 @@ async def main():
             get_pending_events_on_subscribe=False
         )
     )
-
-    # Print a message indicating the agent is subscribing to tasks
-    print('Subscribing to agent DID:', agent_did)
 
     try:
         # Await the subscription task to keep the agent running
